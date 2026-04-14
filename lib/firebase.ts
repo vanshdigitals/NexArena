@@ -1,14 +1,16 @@
 /**
  * lib/firebase.ts
  *
- * Firebase client SDK initialisation.
- * Reads all config from environment variables (see .env.local.example).
- * Uses a singleton pattern to prevent multiple app initialisations
- * during Next.js hot-module replacement in development.
+ * Firebase client SDK initialisation — build-safe.
  *
- * Security note: Only public config (API key, project ID, etc.) is exposed
- * here. All sensitive operations that require service-account credentials
- * must happen in server-side API routes using the Firebase Admin SDK.
+ * ✅ Guards `initializeApp` behind a config-presence check so that
+ *    Next.js SSR prerendering during `npm run build` (where NEXT_PUBLIC_*
+ *    vars are absent) does NOT throw `auth/invalid-api-key`.
+ * ✅ Singleton pattern prevents re-init during HMR.
+ * ✅ All exports are nullable — callers in lib/firestore.ts check before use.
+ *
+ * Security note: Only public config is used here. Sensitive operations
+ * require the Firebase Admin SDK in server-side API routes.
  */
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
@@ -24,24 +26,32 @@ const firebaseConfig = {
   appId:             process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Validate required config keys on module load (dev-time hint)
-if (typeof window !== 'undefined' && !firebaseConfig.projectId) {
+/**
+ * True only when all required config values are present (non-empty strings).
+ * Prevents Firebase from being initialised with empty/undefined credentials,
+ * which would throw `auth/invalid-api-key` during SSR/prerender.
+ */
+const isConfigured =
+  !!firebaseConfig.apiKey &&
+  !!firebaseConfig.projectId &&
+  !!firebaseConfig.appId;
+
+if (!isConfigured && typeof window !== 'undefined') {
   console.warn(
     '[NexArena] Firebase is not configured. ' +
-    'Copy .env.local.example to .env.local and fill in your credentials.'
+    'Copy .env.local.example → .env.local and fill in NEXT_PUBLIC_FIREBASE_* credentials.'
   );
 }
 
-/**
- * Singleton Firebase app instance.
- * Guards against re-initialisation during HMR.
- */
-const app: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
+// ── Singleton initialisation — only when config is present ────────────────
+let app:  FirebaseApp | null = null;
+let auth: Auth        | null = null;
+let db:   Firestore   | null = null;
 
-/** Firebase Authentication instance */
-const auth: Auth = getAuth(app);
+if (isConfigured) {
+  app  = getApps().length ? getApp() : initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db   = getFirestore(app);
+}
 
-/** Cloud Firestore instance */
-const db: Firestore = getFirestore(app);
-
-export { app, auth, db };
+export { app, auth, db, isConfigured };

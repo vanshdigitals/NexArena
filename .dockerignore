@@ -1,0 +1,28 @@
+# ── Build artifacts ───────────────────────────────────────────────
+.next
+out
+
+# ── Dependencies (reinstalled inside container via npm ci) ────────
+node_modules
+
+# ── Local secrets — NEVER ship into the image ─────────────────────
+.env.local
+.env*.local
+
+# ── Version control ───────────────────────────────────────────────
+.git
+.gitignore
+
+# ── Dev / editor files ────────────────────────────────────────────
+.vscode
+.idea
+*.log
+npm-debug.log*
+
+# ── OS noise ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── CI / deployment config not needed in image ────────────────────
+.github
+*.md

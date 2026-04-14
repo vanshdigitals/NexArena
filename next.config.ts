@@ -11,6 +11,12 @@ const nextConfig: NextConfig = {
   /* ── Performance ─────────────────────────── */
   reactStrictMode: true,
 
+  /* ── Standalone output for Docker / Cloud Run ─
+   * Generates .next/standalone — a self-contained server.js with only
+   * the required server-side code. Reduces the Docker image to ~150 MB
+   * instead of shipping all of node_modules.                          */
+  output: 'standalone',
+
   /* ── Security Headers ─────────────────────── */
   async headers() {
     return [
