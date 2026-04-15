@@ -1,8 +1,11 @@
 'use client';
 
+import { memo } from 'react';
+
 /**
  * QuickActions - Premium Edition
  * Chip buttons with soft backgrounds, gradients, and hover lifts.
+ * Wrapped with React.memo for render optimisation.
  */
 
 interface QuickActionsProps {
@@ -19,7 +22,7 @@ const QUICK_ACTIONS = [
   { id: 'qa-seating',   emoji: '🎟️', label: 'My Seat',        prompt: 'Help me find block D, row 14, seat 22 in the stadium.'    },
 ] as const;
 
-export default function QuickActions({ onSelect, disabled = false }: QuickActionsProps) {
+function QuickActions({ onSelect, disabled = false }: QuickActionsProps) {
   return (
     <div
       role="region"
@@ -38,7 +41,7 @@ export default function QuickActions({ onSelect, disabled = false }: QuickAction
           key={id}
           id={id}
           className="btn-chip"
-          onClick={() => onSelect(prompt)}
+          onClick={() => { import('@/lib/analytics').then(({ logQuickActionUsed }) => logQuickActionUsed(label)); onSelect(prompt); }}
           disabled={disabled}
           aria-label={`Quick action: ${label}`}
           title={prompt}
@@ -52,3 +55,5 @@ export default function QuickActions({ onSelect, disabled = false }: QuickAction
     </div>
   );
 }
+
+export default memo(QuickActions);

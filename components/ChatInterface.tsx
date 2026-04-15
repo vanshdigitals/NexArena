@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, FormEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, FormEvent } from 'react';
 import QuickActions from './QuickActions';
 
 interface Message {
@@ -28,13 +28,13 @@ export default function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     e.target.style.height = 'auto';
     e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
-  };
+  }, []);
 
-  const sendMessage = async (content: string) => {
+  const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || isLoading) return;
     setError(null);
 
@@ -49,6 +49,7 @@ export default function ChatInterface() {
     setInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
     setIsLoading(true);
+    import('@/lib/analytics').then(({ logChatMessageSent }) => logChatMessageSent(content.trim().length));
 
     try {
       const res = await fetch('/api/chat', {
@@ -73,26 +74,28 @@ export default function ChatInterface() {
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, aiMsg]);
+      import('@/lib/analytics').then(({ logChatResponseReceived }) => logChatResponseReceived(data.reply.length));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
       setIsLoading(false);
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, messages]);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = useCallback((e: FormEvent) => {
     e.preventDefault();
     sendMessage(input);
-  };
+  }, [input, sendMessage]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage(input);
     }
-  };
+  }, [input, sendMessage]);
 
-  const formatContent = (text: string) => {
+  const formatContent = useCallback((text: string) => {
     // Basic HTML sanitization to prevent XSS
     const sanitized = text
       .replace(/&/g, '&amp;')
@@ -101,7 +104,7 @@ export default function ChatInterface() {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
     return sanitized.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  };
+  }, []);
 
   const isZeroState = messages.length === 0;
 

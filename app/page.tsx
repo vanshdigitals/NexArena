@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import ChatInterface from '@/components/ChatInterface';
 import MapWrapper from '@/components/MapWrapper';
@@ -10,13 +10,18 @@ import WelcomeScreen from './components/WelcomeScreen';
 export default function FanPage() {
   const [viewState, setViewState] = useState<'splash' | 'welcome' | 'app'>('splash');
 
-  const currentTime = new Date().toLocaleString('en-US', {
+  const currentTime = useMemo(() => new Date().toLocaleString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  });
+  }), []);
+
+  // Initialize Firebase Analytics on mount (lazy import to avoid SSR issues)
+  useEffect(() => {
+    import('@/lib/analytics').then(({ initAnalytics }) => initAnalytics());
+  }, []);
 
   // Splash to Welcome transition
   useEffect(() => {
@@ -25,6 +30,9 @@ export default function FanPage() {
         setViewState('welcome');
       }, 2500);
       return () => clearTimeout(timer);
+    }
+    if (viewState === 'app') {
+      import('@/lib/analytics').then(({ logPageView }) => logPageView('arena_home'));
     }
   }, [viewState]);
 

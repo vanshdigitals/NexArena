@@ -1,7 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { subscribeToZoneDensity, type ZoneDensity } from '@/lib/firestore';
+import {
+  ZONES,
+  getDensityLevel,
+  getDensityColor,
+  getDensityPulseClass,
+  getDensityBarWidth,
+} from '@/lib/stadium-utils';
+// Analytics loaded lazily to avoid SSR bundling issues
 
 /**
  * StadiumMap - Premium Edition
@@ -9,113 +17,12 @@ import { subscribeToZoneDensity, type ZoneDensity } from '@/lib/firestore';
  * ✅ 100% SVG — zero external API dependencies.
  * ✅ Premium visual effects with animated pulsing markers.
  * ✅ Sleek bottom-anchored "Slide-up drawer" card on click.
+ * ✅ Optimised with React.memo, useCallback, useMemo.
  */
-
-// ── Types ──────────────────────────────────────────────────────────────────
-
-interface ZoneConfig {
-  firestoreField: keyof Omit<ZoneDensity, 'updatedAt'>;
-  id: string;
-  label: string;
-  sublabel: string;
-  accentColor: string;
-  cx: number;
-  cy: number;
-  textAnchor: 'start' | 'middle' | 'end';
-  textX: number;
-  textY: number;
-  defaultDensity: number;
-  details: string;
-  emoji: string;
-  directions: string;
-}
-
-// ── Static zone config ──────────────────────────────────────────────────
-
-const ZONES: ZoneConfig[] = [
-  {
-    id: 'gate-a',
-    firestoreField: 'gateA',
-    label: 'Gate A',
-    sublabel: 'North Entrance',
-    accentColor: '#3b82f6',
-    cx: 200, cy: 36,
-    textAnchor: 'middle', textX: 200, textY: 22,
-    defaultDensity: 45,
-    details: 'Main north entrance operations running normally. 3 security lanes currently open.',
-    emoji: '🔵',
-    directions: 'Head North towards the main plaza.',
-  },
-  {
-    id: 'gate-b',
-    firestoreField: 'gateB',
-    label: 'Gate B',
-    sublabel: 'South Entrance',
-    accentColor: '#8b5cf6',
-    cx: 200, cy: 224,
-    textAnchor: 'middle', textX: 200, textY: 252,
-    defaultDensity: 72,
-    details: 'Heavy traffic at the South Entrance. Please consider using Gate A if possible.',
-    emoji: '🟣',
-    directions: 'Head South near the transit station.',
-  },
-  {
-    id: 'food-court',
-    firestoreField: 'foodCourt',
-    label: 'Food Court',
-    sublabel: 'West Concourse',
-    accentColor: '#10b981',
-    cx: 36, cy: 130,
-    textAnchor: 'start', textX: 56, textY: 120,
-    defaultDensity: 30,
-    details: 'All stalls open. Try the new artisanal burgers at Stall 4!',
-    emoji: '🍔',
-    directions: 'Located on the West side of the main concourse.',
-  },
-  {
-    id: 'nearest-exit',
-    firestoreField: 'sectionD',
-    label: 'Exit',
-    sublabel: 'Emergency Exit',
-    accentColor: '#f59e0b',
-    cx: 364, cy: 130,
-    textAnchor: 'end', textX: 344, textY: 120,
-    defaultDensity: 20,
-    details: 'East emergency exit is clear. Fastest route out of the stadium currently.',
-    emoji: '🚪',
-    directions: 'East side stairs leading directly to street level.',
-  },
-];
-
-// ── Density helpers ────────────────────────────────────────────────────────
-
-type DensityLevel = 'Low' | 'Moderate' | 'High';
-
-function getDensityLevel(v: number): DensityLevel {
-  if (v < 40) return 'Low';
-  if (v < 70) return 'Moderate';
-  return 'High';
-}
-
-function getDensityColor(v: number): string {
-  if (v < 40) return '#00E676'; // green
-  if (v < 70) return '#FFB300'; // amber
-  return '#FF5252';             // red
-}
-
-function getDensityPulseClass(v: number): string {
-  if (v < 40) return 'marker-pulse-low';
-  if (v < 70) return 'marker-pulse-moderate';
-  return 'marker-pulse-high';
-}
-
-function getDensityBarWidth(v: number): string {
-  return `${Math.min(100, Math.max(0, v))}%`;
-}
 
 // ── Component ────────────────────────────────────────────────────────────
 
-export default function StadiumMap() {
+function StadiumMap() {
   const [activeId,  setActiveId]  = useState<string | null>(null);
   const [densities, setDensities] = useState<Partial<ZoneDensity>>({
     gateA:     45,
@@ -140,7 +47,31 @@ export default function StadiumMap() {
     return () => { unsub?.(); };
   }, []);
 
-  const activeZone = ZONES.find(z => z.id === activeId) ?? null;
+  const activeZone = useMemo(() => ZONES.find(z => z.id === activeId) ?? null, [activeId]);
+
+  const handleZoneClick = useCallback((zoneId: string) => {
+    setActiveId(prev => {
+      const next = prev === zoneId ? null : zoneId;
+      if (next) {
+        const zone = ZONES.find(z => z.id === next);
+        if (zone) {
+          const density = densities[zone.firestoreField] ?? zone.defaultDensity;
+          import('@/lib/analytics').then(({ logZoneClicked }) => logZoneClicked(next, density));
+        }
+      }
+      return next;
+    });
+  }, [densities]);
+
+  const handleCloseDrawer = useCallback(() => {
+    setActiveId(null);
+  }, []);
+
+  const handleBackgroundClick = useCallback((e: React.MouseEvent) => {
+    if ((e.target as SVGElement).tagName === 'svg' || (e.target as HTMLElement).tagName === 'DIV') {
+      setActiveId(null);
+    }
+  }, []);
 
   return (
     <div
@@ -158,11 +89,7 @@ export default function StadiumMap() {
         overflow: 'hidden',
         padding: '24px',
       }}
-      onClick={e => {
-        if ((e.target as SVGElement).tagName === 'svg' || (e.target as HTMLElement).tagName === 'DIV') {
-          setActiveId(null);
-        }
-      }}
+      onClick={handleBackgroundClick}
     >
       {/* ── Background grid pattern layer ── */}
       <svg
@@ -275,12 +202,12 @@ export default function StadiumMap() {
               return (
                 <g
                   key={zone.id}
-                  onClick={e => { e.stopPropagation(); setActiveId(isActive ? null : zone.id); }}
+                  onClick={e => { e.stopPropagation(); handleZoneClick(zone.id); }}
                   style={{ cursor: 'pointer' }}
                   aria-label={`${zone.label} — ${zone.sublabel}. Crowd density: ${level} (${density}%)`}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setActiveId(isActive ? null : zone.id); }}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') handleZoneClick(zone.id); }}
                 >
                   {/* CSS Animated Pulse Ring */}
                   {/* Uses the pulse animation classes defined in globals.css */}
@@ -382,7 +309,7 @@ export default function StadiumMap() {
             >
               {/* Close button */}
               <button
-                onClick={e => { e.stopPropagation(); setActiveId(null); }}
+                onClick={e => { e.stopPropagation(); handleCloseDrawer(); }}
                 aria-label="Close detail card"
                 style={{
                   position: 'absolute', top: 16, right: 16,
@@ -487,3 +414,5 @@ export default function StadiumMap() {
     </div>
   );
 }
+
+export default memo(StadiumMap);
