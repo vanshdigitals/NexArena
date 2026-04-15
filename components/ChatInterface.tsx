@@ -11,20 +11,12 @@ interface Message {
 }
 
 /**
- * ChatInterface
- * Full chat UI that communicates with /api/chat backend route.
- * The backend route talks to Gemini so the API key stays server-side.
+ * ChatInterface - Premium Edition
+ * ChatGPT/Gemini inspired UI with borderless bubbles, custom styling,
+ * animated typing indicators, and zero-state suggestions.
  */
 export default function ChatInterface() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content:
-        '👋 Welcome to **NexArena**! I\'m your AI-powered venue assistant. Ask me anything about restrooms, food courts, exits, seating, or first-aid stations. How can I help you today?',
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,16 +24,14 @@ export default function ChatInterface() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  /* Auto-scroll to bottom on new message */
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  /* Auto-resize textarea */
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 140) + 'px';
+    e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
   };
 
   const sendMessage = async (content: string) => {
@@ -57,9 +47,7 @@ export default function ChatInterface() {
 
     setMessages(prev => [...prev, userMsg]);
     setInput('');
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-    }
+    if (inputRef.current) inputRef.current.style.height = 'auto';
     setIsLoading(true);
 
     try {
@@ -68,14 +56,7 @@ export default function ChatInterface() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: content.trim(),
-          // Exclude the initial welcome message — it is an assistant-role
-          // message that was never part of the real conversation and would
-          // cause Gemini to reject the history with "first content must be
-          // role 'user'". Filter by the stable 'welcome' id so this is
-          // resilient to any future reordering of the messages array.
-          history: messages
-            .filter(m => m.id !== 'welcome')
-            .map(m => ({ role: m.role, content: m.content })),
+          history: messages.map(m => ({ role: m.role, content: m.content })),
         }),
       });
 
@@ -112,9 +93,17 @@ export default function ChatInterface() {
   };
 
   const formatContent = (text: string) => {
-    // Simple bold markdown support
-    return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    // Basic HTML sanitization to prevent XSS
+    const sanitized = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+    return sanitized.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
   };
+
+  const isZeroState = messages.length === 0;
 
   return (
     <section
@@ -124,184 +113,231 @@ export default function ChatInterface() {
         flexDirection: 'column',
         height: '100%',
         minHeight: 0,
+        position: 'relative',
+        background: 'var(--bg-surface)',
       }}
     >
       {/* ── Header ── */}
       <div
         style={{
-          padding: '16px 20px',
+          padding: '20px 24px',
           borderBottom: '1px solid var(--glass-border)',
           display: 'flex',
           alignItems: 'center',
-          gap: '12px',
+          gap: '16px',
           flexShrink: 0,
+          background: 'var(--glass-bg)',
+          backdropFilter: 'blur(10px)',
+          zIndex: 10,
         }}
       >
         <div
           aria-hidden="true"
           style={{
-            width: 38,
-            height: 38,
+            width: 44,
+            height: 44,
             borderRadius: '50%',
             background: 'linear-gradient(135deg, var(--brand-primary), var(--brand-secondary))',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: '1.1rem',
+            fontSize: '1.4rem',
             flexShrink: 0,
+            boxShadow: 'var(--glow-sm)',
           }}
         >
           🤖
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-primary)' }}>
-            Arena AI
+          <p style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+            Arena AI <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>Assistant</span>
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span className="status-dot status-live" aria-hidden="true" />
-            <span style={{ fontSize: '0.75rem', color: 'var(--brand-accent)', fontWeight: 500 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+            <span className="status-dot status-live" aria-hidden="true" style={{ width: 6, height: 6 }} />
+            <span style={{ fontSize: '0.75rem', color: 'var(--brand-accent)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
               Online · Powered by Gemini
             </span>
           </div>
         </div>
       </div>
 
-      {/* ── Messages ── */}
+      {/* ── Messages / Zero State ── */}
       <div
         role="log"
         aria-live="polite"
-        aria-label="Chat messages"
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '20px',
+          padding: '24px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '12px',
+          gap: '24px',
           minHeight: 0,
         }}
       >
-        {messages.map(msg => (
-          <div
-            key={msg.id}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
-            }}
-          >
-            <div
-              className={`chat-bubble ${msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'}`}
-              aria-label={`${msg.role === 'user' ? 'You' : 'Arena AI'}: ${msg.content}`}
-              dangerouslySetInnerHTML={{ __html: formatContent(msg.content) }}
-            />
-            <time
-              dateTime={msg.timestamp.toISOString()}
-              suppressHydrationWarning={true}
-              style={{
-                fontSize: '0.6875rem',
-                color: 'var(--text-muted)',
-                marginTop: 4,
-                padding: '0 4px',
-              }}
-            >
-              {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </time>
-          </div>
-        ))}
-
-        {/* Typing indicator */}
-        {isLoading && (
-          <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-            <div
-              className="chat-bubble chat-bubble-ai typing-indicator"
-              role="status"
-              aria-label="Arena AI is typing"
-            >
-              <span className="typing-dot" aria-hidden="true" />
-              <span className="typing-dot" aria-hidden="true" />
-              <span className="typing-dot" aria-hidden="true" />
+        {isZeroState ? (
+          <div className="animate-fade-in" style={{ margin: 'auto 0', display: 'flex', flexDirection: 'column', gap: 20, textAlign: 'center' }}>
+            <div style={{ fontSize: '3rem', marginBottom: -8 }}>🏟️</div>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+              How can I help you navigate the arena?
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', maxWidth: 400, margin: '0 auto', fontSize: '0.9375rem' }}>
+              I have real-time access to stadium cameras, sensor data, and facility schedules. Ask me anything!
+            </p>
+            {/* Suggestion chips */}
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              {[
+                { label: 'How busy is Gate A?', prompt: 'How busy is Gate A right now?' },
+                { label: 'Find nearest restroom', prompt: 'Where is the nearest restroom from my current section?' },
+                { label: 'Food court wait time', prompt: 'What is the current wait time at the food court?' },
+              ].map(chip => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  className="btn-chip"
+                  onClick={() => sendMessage(chip.prompt)}
+                  disabled={isLoading}
+                  style={{ fontSize: '0.8125rem', padding: '8px 16px' }}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ marginTop: 8, textAlign: 'left' }}>
+              <QuickActions onSelect={sendMessage} disabled={isLoading} />
             </div>
           </div>
+        ) : (
+          <>
+            {messages.map(msg => (
+              <div
+                key={msg.id}
+                className="animate-pop-in"
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  maxWidth: '85%',
+                  alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                }}
+              >
+                {msg.role === 'assistant' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, marginLeft: 4 }}>
+                    <span style={{ fontSize: '0.9rem' }}>🤖</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Arena AI</span>
+                  </div>
+                )}
+                <div
+                  style={{
+                    background: msg.role === 'user'
+                      ? 'linear-gradient(135deg, #00E5FF, #7C4DFF)'
+                      : 'rgba(255,255,255,0.04)',
+                    color: msg.role === 'user' ? 'white' : 'var(--text-primary)',
+                    padding: '14px 18px',
+                    borderRadius: 'var(--radius-lg)',
+                    borderBottomRightRadius: msg.role === 'user' ? 4 : 'var(--radius-lg)',
+                    borderBottomLeftRadius: msg.role === 'assistant' ? 4 : 'var(--radius-lg)',
+                    fontSize: '0.9375rem',
+                    lineHeight: 1.6,
+                    boxShadow: msg.role === 'user' ? '0 8px 24px rgba(0,229,255,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.05)',
+                    border: msg.role === 'user' ? 'none' : '1px solid var(--glass-border)',
+                  }}
+                  dangerouslySetInnerHTML={{ __html: formatContent(msg.content) }}
+                />
+                <span style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 8, padding: '0 4px' }}>
+                  {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            ))}
+
+            {isLoading && (
+              <div className="animate-fade-in" style={{ alignSelf: 'flex-start' }}>
+                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, marginLeft: 4 }}>
+                    <span style={{ fontSize: '0.9rem' }}>🤖</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Arena AI is thinking...</span>
+                  </div>
+                <div style={{
+                  background: 'var(--bg-elevated)',
+                  padding: '16px 20px',
+                  borderRadius: 'var(--radius-lg)',
+                  borderBottomLeftRadius: 4,
+                  border: '1px solid var(--glass-border)',
+                  display: 'flex', gap: 6
+                }}>
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                  <span className="typing-dot" />
+                </div>
+              </div>
+            )}
+          </>
         )}
 
-        {/* Error state */}
         {error && (
-          <div
-            role="alert"
-            style={{
-              padding: '12px 16px',
-              background: 'hsla(0,84%,60%,0.1)',
-              border: '1px solid hsla(0,84%,60%,0.3)',
-              borderRadius: 'var(--radius-md)',
-              color: 'var(--brand-danger)',
-              fontSize: '0.875rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <span aria-hidden="true">⚠️</span>
+          <div role="alert" className="animate-fade-in" style={{
+            padding: '14px 18px', background: 'hsla(350, 84%, 60%, 0.15)', border: '1px solid hsla(350, 84%, 60%, 0.4)',
+            borderRadius: 'var(--radius-md)', color: 'var(--brand-danger)', fontSize: '0.875rem',
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <span aria-hidden="true" style={{ fontSize: '1.2rem' }}>⚠️</span>
             {error}
           </div>
         )}
-
-        <div ref={messagesEndRef} aria-hidden="true" />
-      </div>
-
-      {/* ── Quick Actions ── */}
-      <div
-        style={{
-          padding: '12px 20px 8px',
-          borderTop: '1px solid var(--glass-border)',
-          flexShrink: 0,
-        }}
-      >
-        <QuickActions onSelect={sendMessage} disabled={isLoading} />
+        <div ref={messagesEndRef} />
       </div>
 
       {/* ── Input ── */}
-      <div style={{ padding: '12px 20px 20px', flexShrink: 0 }}>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
-          <label htmlFor="chat-input" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0,0,0,0)' }}>
-            Message Arena AI
-          </label>
+      <div style={{ padding: '0 24px 24px', flexShrink: 0, position: 'relative' }}>
+        <form onSubmit={handleSubmit} style={{ position: 'relative', display: 'flex', alignItems: 'flex-end' }}>
           <textarea
             ref={inputRef}
-            id="chat-input"
             className="input-field"
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about restrooms, food, exits, seating…"
+            placeholder="Ask Arena AI anything..."
+            aria-label="Type your message to Arena AI"
             disabled={isLoading}
             rows={1}
-            aria-label="Type your message to Arena AI"
             style={{
-              flex: 1,
+              paddingRight: 60,
+              paddingTop: 16,
+              paddingBottom: 16,
               resize: 'none',
-              lineHeight: '1.5',
-              overflowY: 'hidden',
-              minHeight: 46,
-              maxHeight: 140,
+              background: 'var(--bg-elevated)',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.5), inset 0 2px 4px rgba(0,0,0,0.2)',
+              borderRadius: 'var(--radius-xl)',
             }}
           />
           <button
-            id="chat-send-btn"
             type="submit"
-            className="btn btn-primary"
             disabled={isLoading || !input.trim()}
-            aria-label="Send message to Arena AI"
-            style={{ padding: '12px 20px', flexShrink: 0 }}
+            style={{
+              position: 'absolute',
+              right: 8,
+              bottom: 8,
+              width: 44,
+              height: 44,
+              borderRadius: '50%',
+              background: input.trim() ? 'linear-gradient(135deg, var(--brand-primary), var(--brand-secondary))' : 'var(--bg-card)',
+              color: input.trim() ? 'white' : 'var(--text-muted)',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: input.trim() ? 'pointer' : 'not-allowed',
+              transition: 'all 0.3s ease',
+              boxShadow: input.trim() ? '0 4px 12px rgba(0,229,255,0.35)' : 'none',
+            }}
+            aria-label="Send message"
           >
-            <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="22" y1="2" x2="11" y2="13" />
               <polygon points="22 2 15 22 11 13 2 9 22 2" />
             </svg>
-            <span className="hide-mobile">Send</span>
           </button>
         </form>
-        <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
+        <p style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 12, textAlign: 'center' }}>
           Arena AI can make mistakes. Verify critical safety info with venue staff.
         </p>
       </div>

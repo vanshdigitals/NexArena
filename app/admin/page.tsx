@@ -86,7 +86,7 @@ export default function AdminPage() {
                   className="text-gradient"
                   style={{ fontSize: 'clamp(1.25rem, 3vw, 1.75rem)', fontWeight: 800, letterSpacing: '-0.02em' }}
                 >
-                  Operator Dashboard
+                  NexArena Ops
                 </h1>
                 <span className="section-badge">Admin</span>
               </div>

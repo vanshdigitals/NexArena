@@ -4,44 +4,33 @@ import { useState, useEffect } from 'react';
 import { subscribeToZoneDensity, type ZoneDensity } from '@/lib/firestore';
 
 /**
- * StadiumMap
+ * StadiumMap - Premium Edition
  *
  * ✅ 100% SVG — zero external API dependencies.
- * ✅ Firestore real-time density data drives marker colours.
- * ✅ Click any marker → floating popup card appears on the map.
- * ✅ Transparent 28 × 28 hit-rect per marker for reliable click targets.
- *
- * Density colour rules (mirrors lib/firestore.ts ZoneDensity 0-100 scale):
- *   0–39  → green  (#10b981) Low
- *   40–69 → amber  (#f59e0b) Moderate
- *   70+   → red    (#ef4444) High
+ * ✅ Premium visual effects with animated pulsing markers.
+ * ✅ Sleek bottom-anchored "Slide-up drawer" card on click.
  */
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface ZoneConfig {
-  /** Firestore field name that holds this zone's density (0-100). */
   firestoreField: keyof Omit<ZoneDensity, 'updatedAt'>;
   id: string;
   label: string;
   sublabel: string;
-  /** Static accent colour used for the marker ring / card border. */
   accentColor: string;
-  /** SVG marker centre coordinates (viewBox 0 0 400 260). */
   cx: number;
   cy: number;
-  /** Where the label text is anchored relative to the marker. */
   textAnchor: 'start' | 'middle' | 'end';
   textX: number;
   textY: number;
-  /** Default density if Firestore hasn't loaded yet. */
   defaultDensity: number;
-  /** Extra detail shown in the popup. */
   details: string;
   emoji: string;
+  directions: string;
 }
 
-// ── Static zone config (positions / labels / defaults) ────────────────────
+// ── Static zone config ──────────────────────────────────────────────────
 
 const ZONES: ZoneConfig[] = [
   {
@@ -53,8 +42,9 @@ const ZONES: ZoneConfig[] = [
     cx: 200, cy: 36,
     textAnchor: 'middle', textX: 200, textY: 22,
     defaultDensity: 45,
-    details: 'Main north entrance · 3 security lanes open',
+    details: 'Main north entrance operations running normally. 3 security lanes currently open.',
     emoji: '🔵',
+    directions: 'Head North towards the main plaza.',
   },
   {
     id: 'gate-b',
@@ -65,8 +55,9 @@ const ZONES: ZoneConfig[] = [
     cx: 200, cy: 224,
     textAnchor: 'middle', textX: 200, textY: 252,
     defaultDensity: 72,
-    details: 'South entrance · expect 8-10 min wait',
+    details: 'Heavy traffic at the South Entrance. Please consider using Gate A if possible.',
     emoji: '🟣',
+    directions: 'Head South near the transit station.',
   },
   {
     id: 'food-court',
@@ -77,8 +68,9 @@ const ZONES: ZoneConfig[] = [
     cx: 36, cy: 130,
     textAnchor: 'start', textX: 56, textY: 120,
     defaultDensity: 30,
-    details: 'West concourse · ~4 min wait · 12 stalls open',
+    details: 'All stalls open. Try the new artisanal burgers at Stall 4!',
     emoji: '🍔',
+    directions: 'Located on the West side of the main concourse.',
   },
   {
     id: 'nearest-exit',
@@ -89,8 +81,9 @@ const ZONES: ZoneConfig[] = [
     cx: 364, cy: 130,
     textAnchor: 'end', textX: 344, textY: 120,
     defaultDensity: 20,
-    details: 'East emergency exit · clearest route out',
+    details: 'East emergency exit is clear. Fastest route out of the stadium currently.',
     emoji: '🚪',
+    directions: 'East side stairs leading directly to street level.',
   },
 ];
 
@@ -105,41 +98,25 @@ function getDensityLevel(v: number): DensityLevel {
 }
 
 function getDensityColor(v: number): string {
-  if (v < 40) return '#10b981'; // green
-  if (v < 70) return '#f59e0b'; // amber
-  return '#ef4444';             // red
+  if (v < 40) return '#00E676'; // green
+  if (v < 70) return '#FFB300'; // amber
+  return '#FF5252';             // red
+}
+
+function getDensityPulseClass(v: number): string {
+  if (v < 40) return 'marker-pulse-low';
+  if (v < 70) return 'marker-pulse-moderate';
+  return 'marker-pulse-high';
 }
 
 function getDensityBarWidth(v: number): string {
   return `${Math.min(100, Math.max(0, v))}%`;
 }
 
-// ── Popup position helper ─────────────────────────────────────────────────
-// Returns a CSS top/left percentage so the popup stays inside the SVG container.
-
-interface PopupPos { top: string; left: string; transformOrigin: string }
-
-function getPopupPosition(cx: number, cy: number): PopupPos {
-  // SVG viewBox is 0 0 400 260. Convert to percentages.
-  const pctX = (cx / 400) * 100;
-  const pctY = (cy / 260) * 100;
-
-  // Flip horizontally for right-side zones, vertically for bottom zones.
-  const flipX = cx > 260;
-  const flipY = cy > 160;
-
-  return {
-    top:  `${pctY}%`,
-    left: `${pctX}%`,
-    transformOrigin: `${flipX ? 'right' : 'left'} ${flipY ? 'bottom' : 'top'}`,
-  };
-}
-
 // ── Component ────────────────────────────────────────────────────────────
 
 export default function StadiumMap() {
   const [activeId,  setActiveId]  = useState<string | null>(null);
-  // density map: firestoreField → current value (0-100)
   const [densities, setDensities] = useState<Partial<ZoneDensity>>({
     gateA:     45,
     gateB:     72,
@@ -148,7 +125,6 @@ export default function StadiumMap() {
   });
   const [fsConnected, setFsConnected] = useState(false);
 
-  // ── Firestore real-time subscription ─────────────────────────────────────
   useEffect(() => {
     let unsub: (() => void) | undefined;
     try {
@@ -159,7 +135,7 @@ export default function StadiumMap() {
         }
       });
     } catch {
-      // Firebase not configured — silently use defaults
+      // Firebase not configured
     }
     return () => { unsub?.(); };
   }, []);
@@ -177,321 +153,337 @@ export default function StadiumMap() {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(160deg, hsl(222,47%,6%) 0%, hsl(222,40%,10%) 100%)',
+        background: 'transparent',
         position: 'relative',
         overflow: 'hidden',
-        padding: '12px 12px 0',
+        padding: '24px',
       }}
       onClick={e => {
-        // Close popup when clicking outside a marker
         if ((e.target as SVGElement).tagName === 'svg' || (e.target as HTMLElement).tagName === 'DIV') {
           setActiveId(null);
         }
       }}
     >
-      {/* ── Background grid ── */}
+      {/* ── Background grid pattern layer ── */}
       <svg
         aria-hidden="true"
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.08 }}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.15 }}
         xmlns="http://www.w3.org/2000/svg"
       >
         <defs>
-          <pattern id="sgrid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#3b82f6" strokeWidth="0.6" />
+          <pattern id="premiumGrid" width="60" height="60" patternUnits="userSpaceOnUse">
+            <path d="M 60 0 L 0 0 0 60" fill="none" stroke="var(--brand-primary)" strokeWidth="0.5" />
           </pattern>
         </defs>
-        <rect width="100%" height="100%" fill="url(#sgrid)" />
+        <rect width="100%" height="100%" fill="url(#premiumGrid)" />
       </svg>
 
       {/* ── Radial ambient glow ── */}
       <div
         aria-hidden="true"
         style={{
-          position: 'absolute', width: '60%', height: '60%', top: '20%', left: '20%',
-          background: 'radial-gradient(ellipse, hsla(217,91%,60%,0.07) 0%, transparent 70%)',
+          position: 'absolute', width: '80%', height: '80%', top: '10%', left: '10%',
+          background: 'radial-gradient(ellipse, rgba(0,229,255,0.08) 0%, transparent 60%)',
           pointerEvents: 'none',
         }}
       />
 
-      {/* ── Firestore status pill ── */}
+      {/* ── Live Badge ── */}
       <div
         aria-label={fsConnected ? 'Firestore live data connected' : 'Using default density data'}
+        className="glass-card"
         style={{
-          position: 'absolute', top: 10, right: 12,
-          display: 'flex', alignItems: 'center', gap: 5,
-          padding: '3px 9px',
-          background: 'hsla(222,40%,14%,0.9)',
-          border: `1px solid ${fsConnected ? '#10b98133' : '#f59e0b33'}`,
+          position: 'absolute', top: 20, right: 20,
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '6px 12px',
           borderRadius: 99,
           zIndex: 10,
         }}
       >
-        <span style={{
-          width: 6, height: 6, borderRadius: '50%',
-          background: fsConnected ? '#10b981' : '#f59e0b',
-          boxShadow: `0 0 6px ${fsConnected ? '#10b981' : '#f59e0b'}`,
-          animation: 'blink 1.5s ease-in-out infinite',
-        }} aria-hidden="true" />
-        <span style={{ fontSize: '0.6rem', color: fsConnected ? '#10b981' : '#f59e0b', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-          {fsConnected ? 'Live' : 'Demo'}
+        <span className={fsConnected ? 'status-dot status-live' : 'status-dot status-warning'} aria-hidden="true" />
+        <span className="label-mono" style={{ fontSize: '0.65rem', color: fsConnected ? 'var(--brand-accent)' : 'var(--brand-warning)' }}>
+          {fsConnected ? 'Connected' : 'Demo Mode'}
         </span>
       </div>
 
       {/* ── SVG Map ── */}
-      <div style={{ position: 'relative', width: '100%', maxWidth: 480, flex: '1 1 auto', minHeight: 0 }}>
+      <div style={{ position: 'relative', width: '100%', maxWidth: 700, flex: '1 1 auto', minHeight: 0, display: 'flex', alignItems: 'center', boxShadow: '0 0 80px rgba(0,229,255,0.1)', borderRadius: '50%' }}>
         <svg
-          viewBox="0 0 400 260"
+          viewBox="0 0 400 280"
           xmlns="http://www.w3.org/2000/svg"
-          style={{ width: '100%', height: '100%', maxHeight: 300, overflow: 'visible', display: 'block' }}
+          style={{ width: '100%', height: '100%', maxHeight: 450, overflow: 'visible', display: 'block' }}
           aria-hidden="true"
         >
           <defs>
+            <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#000000" floodOpacity="0.8" />
+            </filter>
             <filter id="mglow" x="-100%" y="-100%" width="300%" height="300%">
               <feGaussianBlur stdDeviation="3.5" result="blur" />
               <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
             <radialGradient id="grass" cx="50%" cy="50%" r="50%">
-              <stop offset="0%"   stopColor="#10b981" stopOpacity="0.22" />
-              <stop offset="100%" stopColor="#059669" stopOpacity="0.06" />
+              <stop offset="0%"   stopColor="#00E676" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#00C853" stopOpacity="0.08" />
             </radialGradient>
             <radialGradient id="track" cx="50%" cy="50%" r="50%">
-              <stop offset="0%"   stopColor="#1e3a5f" stopOpacity="0" />
-              <stop offset="100%" stopColor="#1e3a5f" stopOpacity="0.55" />
+              <stop offset="0%"   stopColor="#0f172a" stopOpacity="0" />
+              <stop offset="100%" stopColor="#0f172a" stopOpacity="0.8" />
             </radialGradient>
           </defs>
 
-          {/* Stadium shell */}
-          <ellipse cx="200" cy="130" rx="190" ry="118" fill="hsl(222,40%,9%)" stroke="#1e3a5f" strokeWidth="2" />
+          {/* Stadium shell drop shadow wrapper */}
+          <g transform="translate(0, 10)">
+            {/* Outer Rim */}
+            <ellipse cx="200" cy="140" rx="190" ry="118" fill="var(--bg-void)" stroke="rgba(0,229,255,0.25)" strokeWidth="2" />
 
-          {/* Stands */}
-          {[185, 172, 159].map((rx, i) => (
-            <ellipse key={rx} cx="200" cy="130" rx={rx} ry={rx * 0.62}
-              fill="none" stroke={`hsla(217,50%,40%,${0.22 - i * 0.06})`} strokeWidth="6" />
-          ))}
+            {/* Stands */}
+            {[185, 172, 159].map((rx, i) => (
+              <ellipse key={rx} cx="200" cy="140" rx={rx} ry={rx * 0.62}
+                fill="none" stroke={`hsla(217,50%,50%,${0.25 - i * 0.05})`} strokeWidth="6" />
+            ))}
 
-          {/* Track */}
-          <ellipse cx="200" cy="130" rx="148" ry="92" fill="url(#track)"
-            stroke="#2563eb" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.65" />
+            {/* Track */}
+            <ellipse cx="200" cy="140" rx="148" ry="92" fill="url(#track)"
+              stroke="var(--brand-primary)" strokeWidth="1.5" strokeDasharray="6 4" opacity="0.4" />
 
-          {/* Field */}
-          <ellipse cx="200" cy="130" rx="128" ry="78" fill="url(#grass)" stroke="#10b981" strokeWidth="1.5" opacity="0.9" />
+            {/* Field */}
+            <ellipse cx="200" cy="140" rx="128" ry="78" fill="url(#grass)" stroke="var(--brand-accent)" strokeWidth="1.5" opacity="0.8" />
 
-          {/* Field markings */}
-          <circle cx="200" cy="130" r="22" fill="none" stroke="#10b981" strokeWidth="1" opacity="0.45" />
-          <circle cx="200" cy="130" r="3"  fill="#10b981" opacity="0.6" />
-          <line x1="72" y1="130" x2="328" y2="130" stroke="#10b981" strokeWidth="1" opacity="0.25" />
-          <rect x="174" y="52"  width="52" height="20" rx="3" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.55" />
-          <rect x="174" y="188" width="52" height="20" rx="3" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.55" />
-          <path d="M 178 72 Q 200 85 222 72"  fill="none" stroke="#f59e0b" strokeWidth="1" opacity="0.35" />
-          <path d="M 178 188 Q 200 175 222 188" fill="none" stroke="#f59e0b" strokeWidth="1" opacity="0.35" />
+            {/* Field markings */}
+            <circle cx="200" cy="140" r="22" fill="none" stroke="var(--brand-accent)" strokeWidth="1" opacity="0.45" />
+            <circle cx="200" cy="140" r="3"  fill="var(--brand-accent)" opacity="0.6" />
+            <line x1="72" y1="140" x2="328" y2="140" stroke="var(--brand-accent)" strokeWidth="1" opacity="0.3" />
+            <rect x="174" y="62"  width="52" height="20" rx="3" fill="none" stroke="var(--brand-warning)" strokeWidth="1.5" opacity="0.6" />
+            <rect x="174" y="198" width="52" height="20" rx="3" fill="none" stroke="var(--brand-warning)" strokeWidth="1.5" opacity="0.6" />
+            <path d="M 178 82 Q 200 95 222 82"  fill="none" stroke="var(--brand-warning)" strokeWidth="1" opacity="0.4" />
+            <path d="M 178 198 Q 200 185 222 198" fill="none" stroke="var(--brand-warning)" strokeWidth="1" opacity="0.4" />
 
-          {/* ── Zone markers ── */}
-          {ZONES.map(zone => {
-            const density      = densities[zone.firestoreField] ?? zone.defaultDensity;
-            const mColor       = getDensityColor(density);
-            const level        = getDensityLevel(density);
-            const isActive     = activeId === zone.id;
+            {/* ── Zone markers ── */}
+            {ZONES.map(zone => {
+              const density      = densities[zone.firestoreField] ?? zone.defaultDensity;
+              const mColor       = getDensityColor(density);
+              const level        = getDensityLevel(density);
+              const isActive     = activeId === zone.id;
+              const pulseClass   = getDensityPulseClass(density);
 
-            return (
-              <g
-                key={zone.id}
-                onClick={e => { e.stopPropagation(); setActiveId(isActive ? null : zone.id); }}
-                style={{ cursor: 'pointer' }}
-                aria-label={`${zone.label} — ${zone.sublabel}. Crowd density: ${level} (${density}%)`}
-                role="button"
-                tabIndex={0}
-                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setActiveId(isActive ? null : zone.id); }}
-              >
-                {/* Outer pulse ring — density colour */}
-                <circle
-                  cx={zone.cx} cy={zone.cy}
-                  r={isActive ? 24 : 19}
-                  fill={mColor}
-                  opacity={isActive ? 0.22 : 0.13}
-                  style={{ transition: 'all 0.25s ease' }}
-                />
-                {/* Accent ring — zone accent colour */}
-                <circle
-                  cx={zone.cx} cy={zone.cy} r={isActive ? 14 : 11}
-                  fill="none"
-                  stroke={zone.accentColor}
-                  strokeWidth={isActive ? 1.5 : 1}
-                  opacity={0.5}
-                  style={{ transition: 'all 0.25s ease' }}
-                />
-                {/* Main marker — density colour */}
-                <circle
-                  cx={zone.cx} cy={zone.cy} r={10}
-                  fill={mColor}
-                  stroke="#0a0e1a"
-                  strokeWidth="2"
-                  filter="url(#mglow)"
-                  style={{ transition: 'fill 0.4s ease' }}
-                />
-                {/* White inner dot */}
-                <circle cx={zone.cx} cy={zone.cy} r={3.5} fill="#fff" opacity="0.92" />
+              // Use standard offset from config, shift down 10 to match stadium translation
+              const zcx = zone.cx;
+              const zcy = zone.cy + 10;
+              const textY = zone.textY + 10;
 
-                {/* Transparent hit-area for reliable click events */}
-                <rect
-                  x={zone.cx - 16} y={zone.cy - 16}
-                  width="32" height="32"
-                  fill="transparent"
+              return (
+                <g
+                  key={zone.id}
+                  onClick={e => { e.stopPropagation(); setActiveId(isActive ? null : zone.id); }}
                   style={{ cursor: 'pointer' }}
-                />
-
-                {/* Zone label */}
-                <text
-                  x={zone.textX} y={zone.textY}
-                  textAnchor={zone.textAnchor}
-                  fill={zone.accentColor}
-                  fontSize="8.5"
-                  fontFamily="Outfit, sans-serif"
-                  fontWeight="700"
-                  letterSpacing="0.4"
-                  style={{ userSelect: 'none', pointerEvents: 'none' }}
+                  aria-label={`${zone.label} — ${zone.sublabel}. Crowd density: ${level} (${density}%)`}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setActiveId(isActive ? null : zone.id); }}
                 >
-                  {zone.label}
-                </text>
-              </g>
-            );
-          })}
+                  {/* CSS Animated Pulse Ring */}
+                  {/* Uses the pulse animation classes defined in globals.css */}
+                  <circle
+                    className={pulseClass}
+                    cx={zcx} cy={zcy}
+                    r={20}
+                    fill={mColor}
+                    style={{ transformOrigin: `${zcx}px ${zcy}px` }}
+                  />
+
+                  {/* Outer glow ring */}
+                  <circle
+                    cx={zcx} cy={zcy}
+                    r={isActive ? 20 : 15}
+                    fill={mColor}
+                    opacity={isActive ? 0.3 : 0.15}
+                    style={{ transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)' }}
+                  />
+                  {/* Accent ring */}
+                  <circle
+                    cx={zcx} cy={zcy} r={isActive ? 15 : 12}
+                    fill="none"
+                    stroke={zone.accentColor}
+                    strokeWidth={isActive ? 2 : 1.5}
+                    opacity={0.8}
+                    style={{ transition: 'all 0.3s ease' }}
+                  />
+                  {/* Main solid marker */}
+                  <circle
+                    cx={zcx} cy={zcy} r={10}
+                    fill={mColor}
+                    stroke="var(--bg-void)"
+                    strokeWidth="2.5"
+                    filter="url(#mglow)"
+                    style={{ transition: 'fill 0.4s ease' }}
+                  />
+                  {/* White inner dot */}
+                  <circle cx={zcx} cy={zcy} r={3.5} fill="#fff" opacity="0.95" />
+
+                  {/* Hit area */}
+                  <rect
+                    x={zcx - 20} y={zcy - 20}
+                    width="40" height="40"
+                    fill="transparent"
+                    style={{ cursor: 'pointer' }}
+                  />
+
+                  {/* Zone label */}
+                  <text
+                    x={zone.textX} y={textY}
+                    textAnchor={zone.textAnchor}
+                    fill={isActive ? 'white' : 'var(--text-secondary)'}
+                    fontSize="10"
+                    fontFamily="var(--font-sans)"
+                    fontWeight="800"
+                    letterSpacing="0.04em"
+                    filter={isActive ? 'url(#shadow)' : 'none'}
+                    style={{ userSelect: 'none', pointerEvents: 'none', transition: 'fill 0.2s' }}
+                  >
+                    {zone.label}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
         </svg>
 
-        {/* ── Floating popup — rendered in HTML over the SVG ── */}
+        {/* ── Slide-up Info Drawer (Replacing small popups) ── */}
         {activeZone && (() => {
           const density  = densities[activeZone.firestoreField] ?? activeZone.defaultDensity;
           const dColor   = getDensityColor(density);
           const dLevel   = getDensityLevel(density);
-          const pos      = getPopupPosition(activeZone.cx, activeZone.cy);
-          const flipX    = activeZone.cx > 260;
-          const flipY    = activeZone.cy > 160;
 
           return (
             <div
+              className="animate-slide-up-card"
               role="dialog"
               aria-modal="false"
-              aria-label={`${activeZone.label} zone information`}
+              aria-label={`${activeZone.label} detail card`}
               style={{
                 position: 'absolute',
-                top:  pos.top,
-                left: pos.left,
-                transform: `translate(${flipX ? 'calc(-100% - 10px)' : '10px'}, ${flipY ? 'calc(-100% - 8px)' : '8px'})`,
-                transformOrigin: pos.transformOrigin,
-                zIndex: 20,
-                width: 210,
-                background: 'hsla(222,45%,11%,0.97)',
-                border: `1px solid ${activeZone.accentColor}55`,
-                borderLeft: `3px solid ${activeZone.accentColor}`,
-                borderRadius: 12,
-                padding: '12px 14px',
-                backdropFilter: 'blur(16px)',
-                boxShadow: `0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px ${activeZone.accentColor}22`,
-                animation: 'bubble-in 160ms ease both',
+                bottom: 12,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: 'calc(100% - 24px)',
+                maxWidth: 420,
+                zIndex: 30,
+                background: 'var(--glass-bg)',
+                border: '1px solid var(--glass-border)',
+                borderTop: `4px solid ${activeZone.accentColor}`,
+                borderRadius: 'var(--radius-xl)',
+                padding: '20px',
+                backdropFilter: 'blur(30px)',
+                WebkitBackdropFilter: 'blur(30px)',
+                boxShadow: '0 20px 40px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.05)',
                 pointerEvents: 'auto',
               }}
             >
               {/* Close button */}
               <button
                 onClick={e => { e.stopPropagation(); setActiveId(null); }}
-                aria-label={`Close ${activeZone.label} info`}
+                aria-label="Close detail card"
                 style={{
-                  position: 'absolute', top: 8, right: 8,
-                  width: 20, height: 20,
+                  position: 'absolute', top: 16, right: 16,
+                  width: 28, height: 28,
                   borderRadius: '50%',
-                  background: 'hsla(215,30%,20%,0.8)',
-                  border: 'none',
-                  color: '#6b8aaa',
-                  fontSize: '0.75rem',
-                  cursor: 'pointer',
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--glass-border)',
+                  color: 'var(--text-secondary)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  lineHeight: 1,
-                  padding: 0,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
                 }}
+                onMouseOver={(e) => { e.currentTarget.style.color = 'white'; e.currentTarget.style.background = 'hsla(0,0%,100%,0.1)'; }}
+                onMouseOut={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.background = 'var(--bg-elevated)'; }}
               >
-                ×
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
               </button>
 
               {/* Header */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <span aria-hidden="true" style={{ fontSize: '1.1rem' }}>{activeZone.emoji}</span>
-                <div>
-                  <p style={{ fontSize: '0.875rem', fontWeight: 700, color: '#f0f4ff', lineHeight: 1.2 }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 16 }}>
+                <div style={{
+                  fontSize: '2rem',
+                  background: 'var(--bg-elevated)',
+                  padding: '12px',
+                  borderRadius: '16px',
+                  boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.3)',
+                }}>
+                  {activeZone.emoji}
+                </div>
+                <div style={{ paddingTop: 4 }}>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'white', lineHeight: 1.1 }}>
                     {activeZone.label}
-                  </p>
-                  <p style={{ fontSize: '0.6875rem', color: '#6b8aaa', marginTop: 1 }}>
+                  </h3>
+                  <p className="label-mono" style={{ fontSize: '0.75rem', marginTop: 4 }}>
                     {activeZone.sublabel}
                   </p>
                 </div>
               </div>
 
-              {/* Density bar */}
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                  <span style={{ fontSize: '0.6875rem', color: '#6b8aaa', fontWeight: 600 }}>Crowd Density</span>
-                  <span style={{ fontSize: '0.6875rem', fontWeight: 800, color: dColor, fontFamily: 'monospace' }}>
+              {/* Density Indicator */}
+              <div style={{ marginBottom: 16, background: 'var(--bg-deep)', padding: '12px', borderRadius: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Live Crowd Density</span>
+                  <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: dColor }}>
                     {density}% — {dLevel}
                   </span>
                 </div>
-                <div style={{ height: 5, borderRadius: 3, background: 'hsla(215,30%,20%,0.8)', overflow: 'hidden' }}>
+                <div style={{ height: 6, borderRadius: 3, background: 'var(--bg-void)', overflow: 'hidden' }}>
                   <div style={{
                     height: '100%',
                     width: getDensityBarWidth(density),
-                    background: `linear-gradient(90deg, #10b981, ${dColor})`,
+                    background: `linear-gradient(90deg, var(--brand-accent), ${dColor})`,
                     borderRadius: 3,
-                    transition: 'width 0.5s ease',
+                    transition: 'width 0.8s cubic-bezier(0.16, 1, 0.3, 1)',
                   }} />
                 </div>
               </div>
 
-              {/* Detail text */}
-              <p style={{ fontSize: '0.6875rem', color: '#8aafcc', lineHeight: 1.5 }}>
+              {/* Details */}
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 16 }}>
                 {activeZone.details}
               </p>
 
-              {/* Firestore badge */}
-              <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
-                <span style={{
-                  width: 5, height: 5, borderRadius: '50%',
-                  background: fsConnected ? '#10b981' : '#f59e0b',
-                  flexShrink: 0,
-                }} aria-hidden="true" />
-                <span style={{ fontSize: '0.6rem', color: '#4a6280', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                  {fsConnected ? 'Live Firestore data' : 'Demo data'}
-                </span>
-              </div>
+              {/* Action Button */}
+              <button className="btn btn-primary" style={{ width: '100%', padding: '12px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 20l-5.447-2.724A2 2 0 013 15.382V5.618a2 2 0 011.106-1.789L9 4l6 3 5.447-2.724A2 2 0 0123 5.618v9.764a2 2 0 01-1.106 1.789L15 20l-6-3z" />
+                  <path d="M9 4v16" />
+                  <path d="M15 4v16" />
+                </svg>
+                Navigate Here
+              </button>
+
             </div>
           );
         })()}
       </div>
 
-      {/* ── Legend strip ── */}
+      {/* ── Legend ── */}
       <div
         role="list"
         aria-label="Density colour legend"
+        className="glass-card"
         style={{
-          display: 'flex', gap: 12, flexShrink: 0,
-          padding: '8px 4px 10px',
+          display: 'flex', gap: 20, flexShrink: 0,
+          padding: '10px 24px',
+          borderRadius: 99,
           flexWrap: 'wrap', justifyContent: 'center',
+          marginTop: 'auto',
+          zIndex: 1,
         }}
       >
-        {([['#10b981','Low'],['#f59e0b','Moderate'],['#ef4444','High']] as const).map(([color, label]) => (
-          <div key={label} role="listitem" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, boxShadow: `0 0 5px ${color}` }} aria-hidden="true" />
-            <span style={{ fontSize: '0.6875rem', color: '#4a6280', fontWeight: 500 }}>{label}</span>
+        {([['#00E676','Low'],['#FFB300','Moderate'],['#FF5252','High']] as const).map(([color, label]) => (
+          <div key={label} role="listitem" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} aria-hidden="true" />
+            <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', fontWeight: 600 }}>{label}</span>
           </div>
         ))}
-        <span style={{ fontSize: '0.6875rem', color: '#2a3f55', marginLeft: 6, fontFamily: 'monospace', letterSpacing: '0.04em' }}>
-          NexArena Map
-        </span>
       </div>
-
-      {/* ── Hint text ── */}
-      <p
-        aria-live="polite"
-        style={{ fontSize: '0.6875rem', color: '#2e4a66', textAlign: 'center', paddingBottom: 8, flexShrink: 0 }}
-      >
-        {activeId ? '' : 'Tap a marker to view zone details'}
-      </p>
     </div>
   );
 }

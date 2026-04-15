@@ -1,9 +1,8 @@
 'use client';
 
 /**
- * QuickActions
- * Chip buttons for common fan queries. On click they pre-fill the
- * chat with the selected prompt, calling the onSelect callback.
+ * QuickActions - Premium Edition
+ * Chip buttons with soft backgrounds, gradients, and hover lifts.
  */
 
 interface QuickActionsProps {
@@ -22,30 +21,34 @@ const QUICK_ACTIONS = [
 
 export default function QuickActions({ onSelect, disabled = false }: QuickActionsProps) {
   return (
-    <section aria-label="Quick action shortcuts">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '8px',
-        }}
-      >
-        {QUICK_ACTIONS.map(({ id, emoji, label, prompt }) => (
-          <button
-            key={id}
-            id={id}
-            className="btn-chip"
-            onClick={() => onSelect(prompt)}
-            disabled={disabled}
-            aria-label={`Quick action: ${label}`}
-            title={prompt}
-            type="button"
-          >
-            <span aria-hidden="true">{emoji}</span>
-            {label}
-          </button>
-        ))}
-      </div>
-    </section>
+    <div
+      role="region"
+      aria-label="Quick action suggestions"
+      style={{
+        display: 'flex',
+        flexWrap: 'nowrap',
+        gap: '10px',
+        overflowX: 'auto',
+        paddingBottom: 4,
+        scrollbarWidth: 'thin',
+      }}
+    >
+      {QUICK_ACTIONS.map(({ id, emoji, label, prompt }) => (
+        <button
+          key={id}
+          id={id}
+          className="btn-chip"
+          onClick={() => onSelect(prompt)}
+          disabled={disabled}
+          aria-label={`Quick action: ${label}`}
+          title={prompt}
+          type="button"
+          style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+        >
+          <span aria-hidden="true" style={{ fontSize: '1.1rem', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}>{emoji}</span>
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
