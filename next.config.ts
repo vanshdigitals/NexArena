@@ -10,6 +10,15 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   /* ── Performance ─────────────────────────── */
   reactStrictMode: true,
+  compress: true,
+  poweredByHeader: false,
+
+  /* ── Image Optimization ──────────────────── */
+  images: {
+    formats: ['image/avif', 'image/webp'],
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920],
+    minimumCacheTTL: 60,
+  },
 
   /* ── Standalone output for Docker / Cloud Run ─
    * Generates .next/standalone — a self-contained server.js with only

@@ -18,9 +18,10 @@ export default function FanPage() {
     minute: '2-digit',
   }), []);
 
-  // Initialize Firebase Analytics on mount (lazy import to avoid SSR issues)
+  // Initialize Firebase Analytics and Web Vitals on mount (lazy import to avoid SSR issues)
   useEffect(() => {
     import('@/lib/analytics').then(({ initAnalytics }) => initAnalytics());
+    import('@/lib/web-vitals').then(({ reportWebVitalsToAnalytics }) => reportWebVitalsToAnalytics());
   }, []);
 
   // Splash to Welcome transition

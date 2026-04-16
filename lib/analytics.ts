@@ -29,10 +29,9 @@ export async function initAnalytics(): Promise<void> {
     const supported = await isSupported();
     if (supported) {
       analyticsInstance = getAnalytics(app);
-      console.log('[NexArena Analytics] ✅ Firebase Analytics initialized');
     }
-  } catch (err) {
-    console.warn('[NexArena Analytics] ⚠️ Analytics not available:', err);
+  } catch {
+    // Analytics not available — non-critical
   }
 }
 

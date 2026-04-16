@@ -1,21 +1,35 @@
 /**
  * app/api/chat/route.ts
  *
- * Backend-only Gemini integration endpoint.
+ * Backend-only Gemini integration endpoint for NexArena.
  *
  * ✅ Security: API keys live only in server environment — never sent to browser.
  * ✅ Key failover: primary → backup key on 429/503 before giving up.
- * ✅ Input validation: message is sanitised and capped.
- * ✅ Rate limiting: add middleware (e.g., upstash/ratelimit) in production.
- * ✅ System prompt: hard-coded venue context ensures Gemini stays on-topic.
+ * ✅ Input validation: message is sanitised, capped, and control-chars stripped.
+ * ✅ Rate limiting: in-memory per-IP sliding window (30 req/min).
+ * ✅ System prompt: detailed venue context keeps Gemini on-topic.
+ * ✅ Streaming-ready: architecture supports ReadableStream upgrade.
+ * ✅ Cache-Control: no-store on all responses to prevent stale AI answers.
+ * ✅ Structured logging via lib/logger.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { createLogger } from '@/lib/logger';
+import { createRateLimiter } from '@/lib/rate-limit';
+import { sanitizeChatMessage } from '@/lib/sanitize';
 
-const MAX_MSG_LENGTH  = 2_000;
+const log = createLogger('/api/chat');
+
+const MAX_MSG_LENGTH    = 2_000;
 const MAX_HISTORY_TURNS = 10;
-const MODEL_NAME      = 'gemini-2.5-flash';
+const MODEL_NAME        = 'gemini-2.5-flash';
+
+/** Per-IP rate limiter: 30 chat requests per minute */
+const chatLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
+
+/** Common Cache-Control header for all responses */
+const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' } as const;
 
 // ── Module-load diagnostic ─────────────────────────────────────────────────
 // Runs once when Next.js cold-starts this route. Shows key presence & length
@@ -25,29 +39,29 @@ const MODEL_NAME      = 'gemini-2.5-flash';
   const backup  = process.env.GEMINI_API_KEY_BACKUP;
 
   if (!primary) {
-    console.error(
-      '[NexArena /api/chat] ❌ GEMINI_API_KEY is not set. ' +
-      'Copy .env.local.example → .env.local and add your key, then restart.'
-    );
+    log.error('GEMINI_API_KEY is not set. Copy .env.local.example → .env.local and add your key.');
   } else {
-    console.log(
-      `[NexArena /api/chat] ✅ PRIMARY key ready  (len: ${primary.length}, prefix: ${primary.slice(0, 8)}…)`
-    );
+    log.info(`PRIMARY key ready (len: ${primary.length}, prefix: ${primary.slice(0, 8)}…)`);
   }
 
   if (!backup) {
-    console.warn('[NexArena /api/chat] ⚠️  GEMINI_API_KEY_BACKUP not set — no failover available.');
+    log.warn('GEMINI_API_KEY_BACKUP not set — no failover available.');
   } else {
-    console.log(
-      `[NexArena /api/chat] ✅ BACKUP  key ready  (len: ${backup.length},  prefix: ${backup.slice(0, 8)}…)`
-    );
+    log.info(`BACKUP key ready (len: ${backup.length}, prefix: ${backup.slice(0, 8)}…)`);
   }
 
-  console.log(`[NexArena /api/chat]    Model: ${MODEL_NAME}`);
+  log.info(`Model: ${MODEL_NAME}`);
 }
 
 // ── System prompt ──────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are Arena AI, a friendly and knowledgeable smart assistant for NexArena — a large-scale sporting venue.
+const SYSTEM_PROMPT = `You are Arena AI, a friendly and knowledgeable smart assistant for NexArena Stadium — a large-scale sporting venue.
+
+VENUE DETAILS:
+- Name: NexArena Stadium
+- Capacity: 45,000 spectators
+- Zones: Gate A (North Entrance), Gate B (South Entrance), Food Court (West Concourse), Exit/Section D (East Emergency Exit)
+- Facilities: 12 restroom blocks (3 per gate), 8 food stalls in the Food Court, 2 medical aid stations (Gate B level + Section 12), accessible routes at all gates
+- Parking: 3 lots (P1 North 2000 spots, P2 South 1500 spots, P3 VIP 500 spots)
 
 Your responsibilities:
 - Help fans navigate the stadium (restrooms, food courts, exits, seating sections, first-aid stations, accessible routes)
@@ -55,6 +69,7 @@ Your responsibilities:
 - Answer questions about facilities, available food, parking, and amenities
 - Offer safety guidance and emergency instructions clearly and calmly
 - Recommend the least-congested routes when possible
+- Guide users to the nearest facility based on their current zone
 
 Tone: Friendly, concise, helpful. Use emojis sparingly for clarity (e.g., 🚻 for restrooms, 🍔 for food).
 Always prioritise attendee safety. If asked about anything unrelated to the venue, politely redirect to venue-related topics.
@@ -80,7 +95,12 @@ interface ChatRequest {
   history?: HistoryMessage[];
 }
 
-/** Returns true for 429 quota / rate-limit errors and 503 overload errors. */
+/**
+ * Returns true for 429 quota / rate-limit errors and 503 overload errors.
+ *
+ * @param err - Unknown error thrown by the Gemini SDK
+ * @returns Whether the error is retryable (quota or overload)
+ */
 function isRetryableError(err: unknown): boolean {
   const e      = err as Record<string, unknown>;
   const status = Number(e?.status ?? e?.code ?? 0);
@@ -94,27 +114,43 @@ function isRetryableError(err: unknown): boolean {
   );
 }
 
-/** Logs a structured error block to the server console. */
+/**
+ * Log a structured error block for a failed Gemini API call.
+ *
+ * @param label - Human-readable label for the error context
+ * @param err - The error object from the Gemini SDK
+ */
 function logGeminiError(label: string, err: unknown): void {
   const e       = err as Record<string, unknown>;
   const code    = e?.code    ?? e?.status   ?? 'UNKNOWN';
   const message = e?.message ?? String(err);
-  const details = e?.errorDetails ?? e?.details ?? null;
 
-  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.error(`[NexArena /api/chat] ❌ ${label}`);
-  console.error('  Model   :', MODEL_NAME);
-  console.error('  Code    :', code);
-  console.error('  Message :', message);
-  if (details) console.error('  Details :', JSON.stringify(details, null, 2));
-  if (err instanceof Error && err.stack) {
-    console.error('  Stack   :', err.stack.split('\n').slice(0, 5).join('\n'));
-  }
-  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  log.error(label, {
+    model: MODEL_NAME,
+    code: String(code),
+    message: String(message),
+  });
 }
 
 // ── Main route handler ─────────────────────────────────────────────────────
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  // ── Rate limiting ──────────────────────────────────────────────────────
+  const clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  const rateResult = chatLimiter.check(clientIp);
+  if (!rateResult.allowed) {
+    log.warn('Rate limit exceeded', { ip: clientIp });
+    return NextResponse.json(
+      { error: 'Too many requests. Please try again later.' },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': String(Math.ceil((rateResult.resetAt - Date.now()) / 1000)),
+          ...NO_STORE_HEADERS,
+        },
+      }
+    );
+  }
+
   // ── Auth check placeholder ─────────────────────────────────────────────
   // In production, verify Firebase ID token from Authorization header:
   //   const idToken = req.headers.get('Authorization')?.split('Bearer ')[1];
@@ -127,7 +163,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } catch {
     return NextResponse.json(
       { error: 'Invalid JSON in request body.' },
-      { status: 400 }
+      { status: 400, headers: NO_STORE_HEADERS }
     );
   }
 
@@ -137,15 +173,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!message || typeof message !== 'string') {
     return NextResponse.json(
       { error: 'Field "message" is required and must be a string.' },
-      { status: 400 }
+      { status: 400, headers: NO_STORE_HEADERS }
     );
   }
 
-  const sanitisedMessage = message.trim().slice(0, MAX_MSG_LENGTH);
+  const sanitisedMessage = sanitizeChatMessage(message, MAX_MSG_LENGTH);
   if (!sanitisedMessage) {
     return NextResponse.json(
       { error: 'Message cannot be empty.' },
-      { status: 400 }
+      { status: 400, headers: NO_STORE_HEADERS }
     );
   }
 
@@ -159,7 +195,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         reply:
           '⚙️ Arena AI is not yet configured. Please set GEMINI_API_KEY in your server environment.',
       },
-      { status: 200 } // 200 so the chat UI renders this as a message gracefully
+      { status: 200, headers: NO_STORE_HEADERS }
     );
   }
 
@@ -179,9 +215,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // ── Per-key Gemini caller ─────────────────────────────────────────────────
   async function callWithKey(apiKey: string, label: string): Promise<string> {
-    console.log(
-      `[NexArena /api/chat] 🔑 Trying ${label} key (prefix: ${apiKey.slice(0, 8)}…) | model: ${MODEL_NAME} | history: ${safeHistory.length} turns`
-    );
+    log.info(`Trying ${label} key`, { prefix: apiKey.slice(0, 8), model: MODEL_NAME, historyTurns: safeHistory.length });
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
       model: MODEL_NAME,
@@ -198,67 +232,66 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── Attempt 1: primary key ────────────────────────────────────────────────
   try {
     const reply = await callWithKey(primaryKey, 'PRIMARY');
-    console.log(`[NexArena /api/chat] ✅ PRIMARY succeeded (${reply.length} chars)`);
-    return NextResponse.json({ reply }, { status: 200 });
+    log.info('PRIMARY succeeded', { replyLength: reply.length });
+    return NextResponse.json({ reply }, { status: 200, headers: NO_STORE_HEADERS });
 
   } catch (primaryErr: unknown) {
     if (isRetryableError(primaryErr)) {
       // ── Attempt 2: backup key ─────────────────────────────────────────────
-      console.warn(
-        `[NexArena /api/chat] ⚠️  PRIMARY key hit quota/overload — failing over to BACKUP key…`
-      );
       const e = primaryErr as Record<string, unknown>;
-      console.warn(`  Primary error: ${e?.status ?? e?.code} — ${String(e?.message ?? primaryErr)}`);
+      log.warn('PRIMARY key hit quota/overload — failing over to BACKUP', {
+        code: String(e?.status ?? e?.code ?? 'unknown'),
+        message: String(e?.message ?? primaryErr),
+      });
 
       if (!backupKey) {
-        console.warn('[NexArena /api/chat] ⚠️  No backup key configured — returning static fallback.');
-        return NextResponse.json({ reply: QUOTA_FALLBACK }, { status: 200 });
+        log.warn('No backup key configured — returning static fallback.');
+        return NextResponse.json({ reply: QUOTA_FALLBACK }, { status: 200, headers: NO_STORE_HEADERS });
       }
 
       try {
         const reply = await callWithKey(backupKey, 'BACKUP');
-        console.log(`[NexArena /api/chat] ✅ BACKUP succeeded (${reply.length} chars)`);
-        return NextResponse.json({ reply }, { status: 200 });
+        log.info('BACKUP succeeded', { replyLength: reply.length });
+        return NextResponse.json({ reply }, { status: 200, headers: NO_STORE_HEADERS });
 
       } catch (backupErr: unknown) {
         if (isRetryableError(backupErr)) {
           // Both keys exhausted → static fallback
-          console.warn('[NexArena /api/chat] ⚠️  BACKUP key also quota-limited — returning static fallback.');
           const eb = backupErr as Record<string, unknown>;
-          console.warn(`  Backup error: ${eb?.status ?? eb?.code} — ${String(eb?.message ?? backupErr)}`);
-          return NextResponse.json({ reply: QUOTA_FALLBACK }, { status: 200 });
+          log.warn('BACKUP key also quota-limited — returning static fallback', {
+            code: String(eb?.status ?? eb?.code ?? 'unknown'),
+          });
+          return NextResponse.json({ reply: QUOTA_FALLBACK }, { status: 200, headers: NO_STORE_HEADERS });
         }
 
         // Backup failed with a non-retryable error
         logGeminiError('BACKUP key failed (non-retryable)', backupErr);
-        const isDev = process.env.NODE_ENV === 'development';
-        const eb = backupErr as Record<string, unknown>;
         return NextResponse.json(
           {
             error: 'AI service temporarily unavailable. Please try again shortly.',
-            ...(isDev && { _debug_key: 'backup', _debug_code: eb?.code ?? eb?.status, _debug_message: eb?.message }),
           },
-          { status: 503 }
+          { status: 503, headers: NO_STORE_HEADERS }
         );
       }
 
     } else {
       // Primary failed with a non-retryable error — don't bother with backup
       logGeminiError('PRIMARY key failed (non-retryable)', primaryErr);
-      const isDev = process.env.NODE_ENV === 'development';
-      const ep = primaryErr as Record<string, unknown>;
       return NextResponse.json(
         {
           error: 'AI service temporarily unavailable. Please try again shortly.',
-          ...(isDev && { _debug_key: 'primary', _debug_code: ep?.code ?? ep?.status, _debug_message: ep?.message }),
         },
-        { status: 503 }
+        { status: 503, headers: NO_STORE_HEADERS }
       );
     }
   }
 }
 
-// Only allow POST
-export async function GET() {
-  return NextResponse.json({ error: 'Method not allowed.' }, { status: 405 });
+/**
+ * GET /api/chat — Method not allowed.
+ *
+ * @returns 405 error response
+ */
+export async function GET(): Promise<NextResponse> {
+  return NextResponse.json({ error: 'Method not allowed.' }, { status: 405, headers: NO_STORE_HEADERS });
 }

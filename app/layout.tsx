@@ -48,8 +48,24 @@ export default function RootLayout({
         {/* Preconnect for Google Fonts */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        {/* Preconnect for Firebase services */}
+        <link rel="preconnect" href="https://firestore.googleapis.com" />
+        <link rel="preconnect" href="https://identitytoolkit.googleapis.com" />
+        <link rel="preconnect" href="https://generativelanguage.googleapis.com" />
+        {/* DNS-prefetch hints for third-party domains */}
+        <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+        <link rel="dns-prefetch" href="https://fonts.gstatic.com" />
+        <link rel="dns-prefetch" href="https://firestore.googleapis.com" />
+        <link rel="dns-prefetch" href="https://generativelanguage.googleapis.com" />
       </head>
       <body suppressHydrationWarning={true}>
+        {/* Skip to main content — accessibility */}
+        <a
+          href="#main-content"
+          className="skip-to-main"
+        >
+          Skip to main content
+        </a>
         {/* Animated grid background */}
         <div className="arena-bg" aria-hidden="true" />
         <main id="main-content">

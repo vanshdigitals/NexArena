@@ -8,6 +8,7 @@
  *    vars are absent) does NOT throw `auth/invalid-api-key`.
  * ✅ Singleton pattern prevents re-init during HMR.
  * ✅ All exports are nullable — callers in lib/firestore.ts check before use.
+ * ✅ Firebase Performance Monitoring initialised lazily (browser only).
  *
  * Security note: Only public config is used here. Sensitive operations
  * require the Firebase Admin SDK in server-side API routes.
@@ -52,6 +53,26 @@ if (isConfigured) {
   app  = getApps().length ? getApp() : initializeApp(firebaseConfig);
   auth = getAuth(app);
   db   = getFirestore(app);
+}
+
+/**
+ * Lazily initialise Firebase Performance Monitoring.
+ * Only runs in browser context with a configured Firebase app.
+ * Non-blocking — errors are silently caught.
+ */
+async function initPerformance(): Promise<void> {
+  if (typeof window === 'undefined' || !app || !isConfigured) return;
+  try {
+    const { getPerformance } = await import('firebase/performance');
+    getPerformance(app);
+  } catch {
+    // Performance monitoring not available — non-critical
+  }
+}
+
+// Kick off lazy perf init (non-blocking)
+if (typeof window !== 'undefined' && isConfigured) {
+  initPerformance();
 }
 
 export { app, auth, db, isConfigured };

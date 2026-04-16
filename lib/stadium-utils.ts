@@ -88,24 +88,48 @@ export const ZONES: ZoneConfig[] = [
 
 // ── Density helpers ────────────────────────────────────────────────────────
 
+/**
+ * Map a density percentage (0-100) to a human-readable level label.
+ *
+ * @param v - Density percentage (0-100)
+ * @returns 'Low' (< 40), 'Moderate' (40-69), or 'High' (≥ 70)
+ */
 export function getDensityLevel(v: number): DensityLevel {
   if (v < 40) return 'Low';
   if (v < 70) return 'Moderate';
   return 'High';
 }
 
+/**
+ * Map a density percentage to a hex colour code for visual indicators.
+ *
+ * @param v - Density percentage (0-100)
+ * @returns Green (#00E676), Amber (#FFB300), or Red (#FF5252)
+ */
 export function getDensityColor(v: number): string {
   if (v < 40) return '#00E676'; // green
   if (v < 70) return '#FFB300'; // amber
   return '#FF5252';             // red
 }
 
+/**
+ * Map a density percentage to a CSS animation class for SVG marker pulses.
+ *
+ * @param v - Density percentage (0-100)
+ * @returns CSS class name controlling pulse speed
+ */
 export function getDensityPulseClass(v: number): string {
   if (v < 40) return 'marker-pulse-low';
   if (v < 70) return 'marker-pulse-moderate';
   return 'marker-pulse-high';
 }
 
+/**
+ * Convert a density value to a clamped CSS width string for progress bars.
+ *
+ * @param v - Density percentage (clamped to 0-100)
+ * @returns CSS percentage string (e.g. '45%')
+ */
 export function getDensityBarWidth(v: number): string {
   return `${Math.min(100, Math.max(0, v))}%`;
 }
